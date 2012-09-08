@@ -24,6 +24,7 @@ ngx_int_t   ngx_http_flex_cache_handler(ngx_http_request_t *);
 typedef struct {
     ngx_flag_t                 enabled;
     ngx_shm_zone_t            *cache;
+    size_t                     block_size;
     ngx_http_complex_value_t   cache_key;
     ngx_uint_t                 cache_min_uses;
     ngx_array_t               *cache_valid;
@@ -57,6 +58,13 @@ static ngx_command_t  ngx_http_flex_cache_module_commands[] = {
       0,
       0,
       &ngx_http_flex_cache_module },
+
+    { ngx_string("flex_cache_block_size"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1, 
+      ngx_conf_set_size_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_flex_cache_loc_conf_t, block_size),
+      NULL },
 
     { ngx_string("flex_cache_min_uses"),
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1, 
@@ -227,6 +235,7 @@ ngx_http_flex_cache_create_loc_conf(ngx_conf_t *cf)
 
     fc->enabled = NGX_CONF_UNSET;
     fc->cache = NGX_CONF_UNSET_PTR;
+    fc->block_size = NGX_CONF_UNSET_SIZE;
     fc->cache_min_uses = NGX_CONF_UNSET_UINT;
     fc->cache_valid = NGX_CONF_UNSET_PTR;
 
@@ -252,6 +261,8 @@ ngx_http_flex_cache_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
                            &fc->cache->shm.name);
         return NGX_CONF_ERROR;
     }
+
+    ngx_conf_merge_size_value(fc->block_size, prev->block_size, 512 * 1024);
 
     ngx_conf_merge_uint_value(fc->cache_min_uses, prev->cache_min_uses, 1);
 
