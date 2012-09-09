@@ -20,6 +20,7 @@ char       *ngx_http_flex_cache_key_conf(ngx_conf_t *, ngx_command_t *, void *);
 ngx_int_t   ngx_http_flex_cache_status(ngx_http_request_t *,
                 ngx_http_variable_value_t *, uintptr_t);
 ngx_int_t   ngx_http_flex_cache_handler(ngx_http_request_t *);
+ngx_int_t   ngx_http_flex_cache_send(ngx_http_request_t *r);
 
 typedef struct {
     ngx_flag_t                 enabled;
@@ -126,7 +127,90 @@ ngx_module_t  ngx_http_flex_cache_module = {
 ngx_int_t
 ngx_http_flex_cache_handler(ngx_http_request_t *r)
 {
-    return NGX_DECLINED;
+    ngx_int_t                        rc;
+    ngx_http_flex_cache_loc_conf_t  *fc;
+
+    fc = ngx_http_get_module_loc_conf(r, ngx_http_flex_cache_module);
+    if (!fc->enabled) {
+        return NGX_DECLINED;
+    }
+
+    if (!(r->method & (NGX_HTTP_GET|NGX_HTTP_HEAD))) {
+        return NGX_HTTP_NOT_ALLOWED;
+    }
+
+    if (r->uri.data[r->uri.len - 1] == '/') {
+        return NGX_DECLINED;
+    }
+
+#if defined(nginx_version) \
+    && ((nginx_version < 7066) \
+        || ((nginx_version >= 8000) && (nginx_version < 8038)))
+    if (r->zero_in_uri) {
+        return NGX_DECLINED;
+    }
+#endif
+
+    rc = ngx_http_discard_request_body(r);
+    if (rc != NGX_OK) {
+        return rc;
+    }
+
+    rc = ngx_http_flex_cache_send(r);
+
+    return rc;
+}
+
+ngx_int_t
+ngx_http_flex_cache_send(ngx_http_request_t *r)
+{
+    ngx_int_t                    rc;
+    u_char                      *last;
+    size_t                       root;
+    ngx_str_t                    path;
+    ngx_chain_t                  out;
+    ngx_buf_t                   *b;
+    size_t                       len;
+
+    last = ngx_http_map_uri_to_path(r, &path, &root, 0);
+    if (last == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    path.len = last - path.data;
+
+    len = sizeof("OK!") -1;
+
+    r->headers_out.content_type.len = sizeof("text/plain") - 1;
+    r->headers_out.content_type.data = (u_char *) "text/plain";
+    r->headers_out.status = NGX_HTTP_OK;
+    r->headers_out.content_length_n = len;
+
+    if (r->method == NGX_HTTP_HEAD) {
+        rc = ngx_http_send_header(r);
+        if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
+            return rc;
+        }
+    }
+
+    b = ngx_create_temp_buf(r->pool, len);
+    if (b == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    out.buf = b;
+    out.next = NULL;
+
+    b->last = ngx_cpymem(b->last, "OK!", sizeof("OK!") - 1);
+
+    b->last_buf = 1;
+
+    rc = ngx_http_send_header(r);
+    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
+       return rc;
+    }
+
+    return ngx_http_output_filter(r, &out);
 }
 
 ngx_int_t
